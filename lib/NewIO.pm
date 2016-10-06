@@ -11,6 +11,38 @@ my class X::IO::Unsupported does X::IO {
     }
 }
 
+my role IO { ... }
+my role IO::Stream { ... }
+
+my class IO::Handle {
+    use fatal;
+
+    my constant @ops = <
+        get getc put print print-nl
+        uniread uniwrite uniget unigetc uniputc
+        read write getbyte putbyte
+        slurp-rest line-seq
+    >;
+
+    has $.stream handles @ops;
+
+    method new(IO::Stream:D $stream) {
+        self.bless(:$stream);
+    }
+
+    method reopen {
+        CATCH { .fail when X::IO }
+        $!stream .= reopen(|%_);
+        self;
+    }
+
+    method close(--> True) {
+        CATCH { .fail when X::IO }
+        $!stream.close(|%_);
+        $!stream = IO::Stream::Closed;
+    }
+}
+
 my role IO {
     use fatal;
 
@@ -107,35 +139,6 @@ my role IO::Stream::Bin does IO::Stream {
 }
 
 my class IO::Stream::Closed does IO::Stream {}
-
-my class IO::Handle {
-    use fatal;
-
-    my constant @ops = <
-        get getc put print print-nl
-        uniread uniwrite uniget unigetc uniputc
-        read write getbyte putbyte
-        slurp-rest line-seq
-    >;
-
-    has $.stream handles @ops;
-
-    method new(IO::Stream:D $stream) {
-        self.bless(:$stream);
-    }
-
-    method reopen {
-        CATCH { .fail when X::IO }
-        $!stream .= reopen(|%_);
-        self;
-    }
-
-    method close(--> True) {
-        CATCH { .fail when X::IO }
-        $!stream.close(|%_);
-        $!stream = IO::Stream::Closed;
-    }
-}
 
 my role IO::FileStream {
     has $.raw;
