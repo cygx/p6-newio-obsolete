@@ -14,28 +14,38 @@ my class X::IO::Unsupported does X::IO {
 my role IO {
     use fatal;
 
-    method open { ... }
+    method open-stream { ... }
+
+    method open {
+        CATCH { .fail when X::IO }
+        IO::Handle.new(self.open-stream(|%_));
+    }
 
     method slurp {
         CATCH { .fail when X::IO }
-        self.open(|%_).slurp-rest(:close);
+        self.open-stream(|%_).slurp-rest(:close);
     }
 
     proto method spurt($ --> True) { CATCH { .fail when X::IO }; {*} }
     multi method spurt(Str:D \x) {
-        my \stream = self.open(|(%_ || :w));
+        my \stream = self.open-stream(|(%_ || :w));
         LEAVE stream.close;
         stream.print(x);
     }
     multi method spurt(Blob:D \x) {
-        my \stream = self.open(:bin, |(%_ || :w));
+        my \stream = self.open-stream(:bin, |(%_ || :w));
         LEAVE stream.close;
         stream.write(x);
     }
     multi method spurt(Uni:D \x) {
-        my \stream = self.open(:uni, |(%_ || :w));
+        my \stream = self.open-stream(:uni, |(%_ || :w));
         LEAVE stream.close;
         stream.uniwrite(x);
+    }
+
+    method lines {
+        CATCH { .fail when X::IO }
+        self.open-stream(|%_).line-seq(:close);
     }
 }
 
@@ -63,6 +73,7 @@ my role IO::Stream {
     method getbyte { unsupported &?ROUTINE }
     method putbyte(uint8) { unsupported &?ROUTINE }
     method slurp-rest { unsupported &?ROUTINE }
+    method line-seq { unsupported &?ROUTINE }
 }
 
 my role IO::Stream::Str does IO::Stream {
@@ -73,6 +84,7 @@ my role IO::Stream::Str does IO::Stream {
     method print(Str:D) { ... }
     method print-nl { ... }
     method slurp-rest { ... }
+    method line-seq { ... }
 }
 
 my role IO::Stream::Uni does IO::Stream {
@@ -103,7 +115,7 @@ my class IO::Handle {
         get getc put print print-nl
         uniread uniwrite uniget unigetc uniputc
         read write getbyte putbyte
-        slurp-rest
+        slurp-rest line-seq
     >;
 
     has $.stream handles @ops;
@@ -125,7 +137,7 @@ my class IO::Handle {
     }
 }
 
-my class IO::FileStream::Bin does IO::Stream::Bin {
+my role IO::FileStream {
     has $.raw;
 
     submethod BUILD(Mu :$raw) {
@@ -141,7 +153,56 @@ my class IO::FileStream::Bin does IO::Stream::Bin {
         CATCH { X::IO.new(os-error => .message).fail }
         nqp::closefh($!raw);
     }
+}
 
+my class IO::FileStream::Str does IO::FileStream does IO::Stream::Str {
+    method get {
+        my str $str;
+        my Mu $fh := self.raw;
+        nqp::stmts(
+            ($str = nqp::readlinechompfh($fh)),
+            # loses last empty line because EOF is set too early, RT #126598
+            nqp::if(nqp::chars($str) || !nqp::eoffh($fh),
+                $str,
+                Nil
+            )
+        )
+    }
+
+    method getc { !!! }
+    method put(Str:D) { !!! }
+    method print(Str:D) { !!! }
+    method print-nl { !!! }
+    method slurp-rest { !!! }
+
+    method line-seq(:$close) {
+        Seq.new(class :: does Iterator {
+            has $!handle;
+            has $!close;
+
+            method !SET-SELF(\handle, $!close) {
+                $!handle := handle;
+                self
+            }
+            method new(\handle, \close) {
+                nqp::create(self)!SET-SELF(handle, close);
+            }
+            method pull-one() is raw {
+                $!handle.get // do {
+                    $!handle.close if $!close;
+                    IterationEnd
+                }
+            }
+            method push-all($target --> IterationEnd) {
+                my $line;
+                $target.push($line) while ($line := $!handle.get).DEFINITE;
+                $!handle.close if $close;
+            }
+        }.new(self, $close));
+    }
+}
+
+my class IO::FileStream::Bin does IO::FileStream does IO::Stream::Bin {
     method read(Int:D) { !!! }
     method write(Blob:D) { !!! }
     method getbyte { !!! }
@@ -159,6 +220,15 @@ my class IO::FileStream::Bin does IO::Stream::Bin {
               !! return $res;
         }
     }
+}
+
+my class IO::FileStream::Uni does IO::FileStream does IO::Stream::Uni {
+    method uniread(Int:D) { !!! }
+    method uniwrite(Uni:D) { !!! }
+    method uniget { !!! }
+    method unigetc { !!! }
+    method uniputc(uint32) { !!! }
+    method slurp-rest { !!! }
 }
 
 my role IO::FileIO does IO {
@@ -205,10 +275,10 @@ my role IO::FileIO does IO {
 
     method abspath { ... }
 
-    proto method open {
-        IO::Handle.new({*}.new(self.abspath, mode(|%_), |%_));
-    }
-    multi method open(:$bin!) { IO::FileStream::Bin }
+    proto method open-stream { {*}.new(self.abspath, mode(|%_), |%_) }
+    multi method open-stream(:$bin!) { IO::FileStream::Bin }
+    multi method open-stream(:$uni!) { IO::FileStream::Uni }
+    multi method open-stream { IO::FileStream::Str }
 }
 
 my class IO::Path is Path does IO::FileIO {}

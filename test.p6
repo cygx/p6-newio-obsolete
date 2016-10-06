@@ -1,5 +1,9 @@
 use lib 'lib';
 use NewIO;
+use fatal;
 
 say IO::Path.^roles;
-print IO::Path.new('test.p6').slurp(:bin).decode;
+
+my $path = IO::Path.new('test.p6');
+print $path.slurp(:bin).decode;
+.perl.say for $path.lines;
