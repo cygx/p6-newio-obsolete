@@ -18,10 +18,10 @@ my class IO::Handle {
     use fatal;
 
     my constant @ops = <
-        get getc put print print-nl chomp
+        get getc put print print-nl chomp readchars
         uniread uniwrite uniget unigetc uniputc
         read write getbyte putbyte
-        slurp-rest line-seq
+        slurp-rest
     >;
 
     has $.stream handles @ops;
@@ -40,6 +40,14 @@ my class IO::Handle {
         CATCH { .fail when X::IO }
         $!stream.close(|%_);
         $!stream = IO::Stream::Closed;
+    }
+
+    method line-seq(:$close) {
+        $!stream.line-seq(close => $close ?? self !! Nil, |%_);
+    }
+
+    method word-seq(:$close) {
+        $!stream.word-seq(close => $close ?? self !! Nil, |%_);
     }
 }
 
@@ -79,6 +87,11 @@ my role IO {
         CATCH { .fail when X::IO }
         self.open-stream(|%_).line-seq(:close);
     }
+
+    method words {
+        CATCH { .fail when X::IO }
+        self.open-stream(|%_).word-seq(:close);
+    }
 }
 
 my role IO::Stream {
@@ -88,25 +101,147 @@ my role IO::Stream {
             typename => ::?CLASS.^name);
     }
 
+    method !closeable($close) {
+        $close === True ?? self !! $close // class { method close {} }
+    }
+
     method close { unsupported &?ROUTINE }
     method reopen { unsupported &?ROUTINE }
+
     method get { unsupported &?ROUTINE }
     method getc { unsupported &?ROUTINE }
     method put(Str:D) { unsupported &?ROUTINE }
     method print(Str:D) { unsupported &?ROUTINE }
     method print-nl { unsupported &?ROUTINE }
     method chomp { unsupported &?ROUTINE }
+    method readchars(Int:D $ = 0) { unsupported &?ROUTINE }
+
     method uniread(Int:D) { unsupported &?ROUTINE }
     method uniwrite(Uni:D) { unsupported &?ROUTINE }
     method uniget { unsupported &?ROUTINE }
     method unigetc { unsupported &?ROUTINE }
     method uniputc(uint32) { unsupported &?ROUTINE }
+
     method read(Int:D) { unsupported &?ROUTINE }
     method write(Blob:D) { unsupported &?ROUTINE }
     method getbyte { unsupported &?ROUTINE }
     method putbyte(uint8) { unsupported &?ROUTINE }
+
     method slurp-rest { unsupported &?ROUTINE }
-    method line-seq { unsupported &?ROUTINE }
+
+    method line-seq { Seq.new(self.line-iterator(|%_)) }
+    method line-iterator(:$close) {
+        my \stream = self;
+        my \closeable = self!closeable($close);
+
+        nqp::create(class :: does Iterator {
+            method pull-one() is raw {
+                stream.get // do {
+                    closeable.close;
+                    IterationEnd
+                }
+            }
+
+            method push-all($target --> IterationEnd) {
+                my $line;
+                $target.push($line) while ($line := stream.get).DEFINITE;
+                closeable.close;
+            }
+        })
+    }
+
+    method word-seq { Seq.new(self.word-iterator(|%_)) }
+    method word-iterator(:$close) {
+        my \stream = self;
+        my \closeable = self!closeable($close);
+
+        class :: does Iterator {
+            has str $!str;
+            has int $!pos;
+            has int $!searching;
+
+            method new { nqp::create(self)!INIT-SELF }
+            method !INIT-SELF {
+                $!str = ''; # RT #126492
+                $!searching = 1;
+                self!next-chunk;
+                self;
+            }
+
+            method !next-chunk() {
+                my int $chars = nqp::chars($!str);
+                $!str = $!pos < $chars ?? nqp::substr($!str,$!pos) !! "";
+                $chars = nqp::chars($!str);
+
+                while $!searching {
+                    $!str = nqp::concat($!str,stream.readchars);
+                    my int $new = nqp::chars($!str);
+                    $!searching = 0 if $new == $chars; # end
+                    $!pos = ($chars = $new)
+                      ?? nqp::findnotcclass(
+                           nqp::const::CCLASS_WHITESPACE, $!str, 0, $chars)
+                      !! 0;
+                    last if $!pos < $chars;
+                }
+            }
+
+            method pull-one() {
+                my int $chars;
+                my int $left;
+                my int $nextpos;
+
+                while ($chars = nqp::chars($!str)) && $!searching {
+                    while ($left = $chars - $!pos) > 0 {
+                        $nextpos = nqp::findcclass(
+                          nqp::const::CCLASS_WHITESPACE,$!str,$!pos,$left);
+                        last unless $left = $chars - $nextpos; # broken word
+
+                        my str $found =
+                          nqp::substr($!str, $!pos, $nextpos - $!pos);
+                        $!pos = nqp::findnotcclass(
+                          nqp::const::CCLASS_WHITESPACE,$!str,$nextpos,$left);
+
+                        return nqp::p6box_s($found);
+                    }
+                    self!next-chunk;
+                }
+                if $!pos < $chars {
+                    my str $found = nqp::substr($!str,$!pos);
+                    $!pos = $chars;
+                    nqp::p6box_s($found)
+                }
+                else {
+                    closeable.close;
+                    IterationEnd
+                }
+            }
+
+            method push-all($target --> IterationEnd) {
+                my int $chars;
+                my int $left;
+                my int $nextpos;
+
+                while ($chars = nqp::chars($!str)) && $!searching {
+                    while ($left = $chars - $!pos) > 0 {
+                        $nextpos = nqp::findcclass(
+                          nqp::const::CCLASS_WHITESPACE,$!str,$!pos,$left);
+                        last unless $left = $chars - $nextpos; # broken word
+
+                        $target.push(nqp::p6box_s(
+                          nqp::substr($!str, $!pos, $nextpos - $!pos)
+                        ));
+
+                        $!pos = nqp::findnotcclass(
+                          nqp::const::CCLASS_WHITESPACE,$!str,$nextpos,$left);
+                    }
+                    self!next-chunk;
+                }
+                $target.push(nqp::p6box_s(nqp::substr($!str,$!pos)))
+                  if $!pos < $chars;
+                closeable.close;
+            }
+        }.new
+    }
 }
 
 my role IO::Stream::Str does IO::Stream {
@@ -117,8 +252,8 @@ my role IO::Stream::Str does IO::Stream {
     method print(Str:D) { ... }
     method print-nl { ... }
     method chomp { ... }
+    method readchars(Int:D $?) { ... }
     method slurp-rest { ... }
-    method line-seq { ... }
 }
 
 my role IO::Stream::Uni does IO::Stream {
@@ -196,33 +331,12 @@ my class IO::FileStream::Str does IO::FileStream does IO::Stream::Str {
     method put(Str:D) { !!! }
     method print(Str:D) { !!! }
     method print-nl { !!! }
-    method slurp-rest { !!! }
 
-    method line-seq(:$close) {
-        Seq.new(class :: does Iterator {
-            has $!handle;
-            has $!close;
-
-            method !SET-SELF(\handle, $!close) {
-                $!handle := handle;
-                self
-            }
-            method new(\handle, \close) {
-                nqp::create(self)!SET-SELF(handle, close);
-            }
-            method pull-one() is raw {
-                $!handle.get // do {
-                    $!handle.close if $!close;
-                    IterationEnd
-                }
-            }
-            method push-all($target --> IterationEnd) {
-                my $line;
-                $target.push($line) while ($line := $!handle.get).DEFINITE;
-                $!handle.close if $close;
-            }
-        }.new(self, $close));
+    method readchars(Int:D $chars = $*DEFAULT-READ-ELEMS) {
+        nqp::readcharsfh($!raw, nqp::unbox_i($chars));
     }
+
+    method slurp-rest { !!! }
 }
 
 my class IO::FileStream::Bin does IO::FileStream does IO::Stream::Bin {
