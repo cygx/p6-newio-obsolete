@@ -28,7 +28,9 @@ my class IO::Handle {
         self.bless(:$stream);
     }
 
-    method reopen {
+    proto method reopen($?) {*}
+    multi method reopen(IO::Stream:D $!stream) { self }
+    multi method reopen {
         CATCH { .fail when X::IO }
         $!stream .= reopen(|%_);
         self;
