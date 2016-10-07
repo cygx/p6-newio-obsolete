@@ -2,9 +2,9 @@
 
 The new IO subsystem would provide two roles `IO` and `IO::Stream` as well as the class `IO::Handle`.
 
-`IO` objects are used to create `IO::Handle` objects which in turn delegate to `IO::Stream` objects to do the actual work.
+`IO` objects are used to create `IO::Stream` objects via `open-stream` and `IO::Handle` objects via `open`. `IO::Handle` delegates to an underlying `IO::Stream` to do the actual work.
 
-Any user-supplied class that does `IO` needs to implement the `open` method, but will get methods like `slurp`, `spurt` or `lines` that automatically call `open` for free.
+Any user-supplied class that does `IO` only needs to implement the `open-stream` method, and will get `open` for free as well as methods like `slurp`, `spurt` or `lines` that implicitly open and close a stream.
 
 The `IO::Handle` class is generic and does not need to be customized. It exists so we can switch between encodings as well as binary and grapheme-based IO by replacing the underlying streams.
 
