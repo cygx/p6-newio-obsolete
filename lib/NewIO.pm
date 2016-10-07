@@ -21,7 +21,6 @@ my class IO::Handle {
         get getc put print print-nl chomp readchars
         uniread uniwrite uniget unigetc uniputc
         read write getbyte putbyte
-        slurp-rest
     >;
 
     has $.stream handles @ops;
@@ -40,6 +39,11 @@ my class IO::Handle {
         CATCH { .fail when X::IO }
         $!stream.close(|%_);
         $!stream = IO::Stream::Closed;
+    }
+
+    method slurp-rest(:$close) {
+        LEAVE self.close if $close;
+        $!stream.slurp-rest(|%_);
     }
 
     method line-seq(:$close) {
