@@ -299,7 +299,13 @@ my role IO::Stream::Bin does IO::Stream {
     method write(Blob:D) { ... }
     method getbyte { ... }
     method putbyte(uint8) { ... }
-    method slurp-rest { ... }
+
+    method slurp-rest(:$close) {
+        my $buf := buf8.new;
+        loop { $buf.append(self.read(0x100000) || last) }
+        self.close if $close;
+        $buf;
+    }
 }
 
 my class IO::Stream::Closed does IO::Stream {}
@@ -367,23 +373,13 @@ my class IO::FileStream::Str does IO::FileStream does IO::Stream::Str {
 }
 
 my class IO::FileStream::Bin does IO::FileStream does IO::Stream::Bin {
-    method read(Int:D) { !!! }
+    method read(Int:D $bytes) {
+        nqp::readfh($!raw, buf8.new, nqp::unbox_i($bytes));
+    }
+
     method write(Blob:D) { !!! }
     method getbyte { !!! }
     method putbyte(uint8) { !!! }
-
-    method slurp-rest(:$close) {
-        CATCH { X::IO.new(os-error => .message).fail }
-        LEAVE self.close if $close;
-
-        my $res := buf8.new;
-        loop {
-            my $buf := nqp::readfh($!raw, buf8.new, 0x100000);
-            nqp::elems($buf)
-              ?? $res.append($buf)
-              !! return $res;
-        }
-    }
 }
 
 my class IO::FileStream::Uni does IO::FileStream does IO::Stream::Uni {
