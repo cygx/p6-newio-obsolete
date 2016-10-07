@@ -133,6 +133,23 @@ my role IO::Stream {
     method slurp-rest { unsupported &?ROUTINE }
 
     method line-seq { Seq.new(self.line-iterator(|%_)) }
+    method line-iterator { unsupported &?ROUTINE }
+
+    method word-seq { Seq.new(self.word-iterator(|%_)) }
+    method word-iterator { unsupported &?ROUTINE }
+}
+
+my role IO::Stream::Str does IO::Stream {
+    method close { ... }
+    method get { ... }
+    method getc { ... }
+    method put(Str:D) { ... }
+    method print(Str:D) { ... }
+    method print-nl { ... }
+    method chomp { ... }
+    method readchars(Int:D $?) { ... }
+    method slurp-rest { ... }
+
     method line-iterator(:$close) {
         my \stream = self;
         my \closeable = self!closeable($close);
@@ -153,7 +170,6 @@ my role IO::Stream {
         })
     }
 
-    method word-seq { Seq.new(self.word-iterator(|%_)) }
     method word-iterator(:$close) {
         my \stream = self;
         my \closeable = self!closeable($close);
@@ -247,18 +263,6 @@ my role IO::Stream {
     }
 }
 
-my role IO::Stream::Str does IO::Stream {
-    method close { ... }
-    method get { ... }
-    method getc { ... }
-    method put(Str:D) { ... }
-    method print(Str:D) { ... }
-    method print-nl { ... }
-    method chomp { ... }
-    method readchars(Int:D $?) { ... }
-    method slurp-rest { ... }
-}
-
 my role IO::Stream::Uni does IO::Stream {
     method close { ... }
     method uniread(Int:D) { ... }
@@ -267,6 +271,26 @@ my role IO::Stream::Uni does IO::Stream {
     method unigetc { ... }
     method uniputc(uint32) { ... }
     method slurp-rest { ... }
+
+    method line-iterator(:$close) {
+        my \stream = self;
+        my \closeable = self!closeable($close);
+
+        nqp::create(class :: does Iterator {
+            method pull-one() is raw {
+                stream.uniget // do {
+                    closeable.close;
+                    IterationEnd
+                }
+            }
+
+            method push-all($target --> IterationEnd) {
+                my $line;
+                $target.push($line) while ($line := stream.uniget).DEFINITE;
+                closeable.close;
+            }
+        })
+    }
 }
 
 my role IO::Stream::Bin does IO::Stream {
