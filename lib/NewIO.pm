@@ -13,6 +13,7 @@ my class X::IO::Unsupported does X::IO {
 
 my role IO { ... }
 my role IO::Stream { ... }
+my class IO::Stream::Closed { ... }
 
 my class IO::Handle {
     use fatal;
