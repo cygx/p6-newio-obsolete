@@ -1,4 +1,5 @@
 use nqp;
+use fatal;
 
 my constant Path = IO::Path;
 
@@ -16,8 +17,6 @@ my role IO::Stream { ... }
 my class IO::Stream::Closed { ... }
 
 my class IO::Handle {
-    use fatal;
-
     has $.stream handles <
         get getc put print print-nl chomp readchars
         uniread uniwrite uniget unigetc uniputc
@@ -31,13 +30,11 @@ my class IO::Handle {
     proto method reopen($?) {*}
     multi method reopen(IO::Stream:D $!stream) { self }
     multi method reopen {
-        CATCH { .fail when X::IO }
         $!stream .= reopen(|%_);
         self;
     }
 
     method close(--> True) {
-        CATCH { .fail when X::IO }
         $!stream.close(|%_);
         $!stream = IO::Stream::Closed;
     }
@@ -57,21 +54,17 @@ my class IO::Handle {
 }
 
 my role IO {
-    use fatal;
-
     method open-stream { ... }
 
     method open {
-        CATCH { .fail when X::IO }
         IO::Handle.new(self.open-stream(|%_));
     }
 
     method slurp {
-        CATCH { .fail when X::IO }
         self.open-stream(|%_).slurp-rest(:close);
     }
 
-    proto method spurt($ --> True) { CATCH { .fail when X::IO }; {*} }
+    proto method spurt($ --> True) {*}
     multi method spurt(Str:D \x) {
         my \stream = self.open-stream(|(%_ || :w));
         LEAVE stream.close;
@@ -89,12 +82,10 @@ my role IO {
     }
 
     method lines {
-        CATCH { .fail when X::IO }
         self.open-stream(|%_).line-seq(:close);
     }
 
     method words {
-        CATCH { .fail when X::IO }
         self.open-stream(|%_).word-seq(:close);
     }
 }
@@ -331,7 +322,6 @@ my role IO::FileStream {
     method !SET-RAW(Mu $raw) { $!raw := nqp::decont($raw) }
 
     method new(Str:D $path, Str:D $mode, :$chomp) {
-        CATCH { X::IO.new(os-error => .message).fail }
         self.bless(raw => nqp::open($path, $mode), :$chomp);
     }
 
@@ -343,7 +333,6 @@ my role IO::FileStream {
     multi method reopen(:$str?) { IO::FileStream::Str }
 
     method close(--> True) {
-        CATCH { X::IO.new(os-error => .message).fail }
         nqp::closefh($!raw);
     }
 }
