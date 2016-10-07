@@ -6,4 +6,4 @@ say IO::Path.^roles;
 
 my $path = IO::Path.new('test.p6');
 print $path.slurp(:bin).decode;
-.perl.say for $path.lines;
+.perl.say for $path.lines(:!chomp);

@@ -18,7 +18,7 @@ my class IO::Handle {
     use fatal;
 
     my constant @ops = <
-        get getc put print print-nl
+        get getc put print print-nl chomp
         uniread uniwrite uniget unigetc uniputc
         read write getbyte putbyte
         slurp-rest line-seq
@@ -95,6 +95,7 @@ my role IO::Stream {
     method put(Str:D) { unsupported &?ROUTINE }
     method print(Str:D) { unsupported &?ROUTINE }
     method print-nl { unsupported &?ROUTINE }
+    method chomp { unsupported &?ROUTINE }
     method uniread(Int:D) { unsupported &?ROUTINE }
     method uniwrite(Uni:D) { unsupported &?ROUTINE }
     method uniget { unsupported &?ROUTINE }
@@ -115,6 +116,7 @@ my role IO::Stream::Str does IO::Stream {
     method put(Str:D) { ... }
     method print(Str:D) { ... }
     method print-nl { ... }
+    method chomp { ... }
     method slurp-rest { ... }
     method line-seq { ... }
 }
@@ -141,15 +143,17 @@ my role IO::Stream::Bin does IO::Stream {
 my class IO::Stream::Closed does IO::Stream {}
 
 my role IO::FileStream {
-    has $.raw;
+    has $!raw;
 
     submethod BUILD(Mu :$raw) {
-        $!raw := nqp::decont($raw);
+        self!SET-RAW($raw);
     }
 
-    method new(Str:D $path, Str:D $mode) {
+    method !SET-RAW(Mu $raw) { $!raw := nqp::decont($raw) }
+
+    method new(Str:D $path, Str:D $mode, :$chomp) {
         CATCH { X::IO.new(os-error => .message).fail }
-        self.bless(raw => nqp::open($path, $mode));
+        self.bless(raw => nqp::open($path, $mode), :$chomp);
     }
 
     method close(--> True) {
@@ -159,15 +163,31 @@ my role IO::FileStream {
 }
 
 my class IO::FileStream::Str does IO::FileStream does IO::Stream::Str {
+    has Bool:D $.chomp is rw = True;
+
+    submethod BUILD(Mu :$raw, :$chomp) {
+        self!SET-RAW($raw);
+        $!chomp = so $chomp if defined $chomp;
+    }
+
     method get {
         my str $str;
-        my Mu $fh := self.raw;
-        nqp::stmts(
-            ($str = nqp::readlinechompfh($fh)),
-            # loses last empty line because EOF is set too early, RT #126598
-            nqp::if(nqp::chars($str) || !nqp::eoffh($fh),
-                $str,
-                Nil
+        nqp::if($!chomp,
+            nqp::stmts(
+                ($str = nqp::readlinechompfh($!raw)),
+                # loses last empty line because EOF is set too early, RT #126598
+                nqp::if(nqp::chars($str) || !nqp::eoffh($!raw),
+                    $str,
+                    Nil
+                )
+            ),
+            nqp::stmts(
+                ($str = nqp::readlinefh($!raw)),
+                # no need to check EOF
+                nqp::if(nqp::chars($str),
+                    $str,
+                    Nil
+                )
             )
         )
     }
