@@ -18,13 +18,11 @@ my class IO::Stream::Closed { ... }
 my class IO::Handle {
     use fatal;
 
-    my constant @ops = <
+    has $.stream handles <
         get getc put print print-nl chomp readchars
         uniread uniwrite uniget unigetc uniputc
         read write getbyte putbyte
     >;
-
-    has $.stream handles @ops;
 
     method new(IO::Stream:D $stream) {
         self.bless(:$stream);
