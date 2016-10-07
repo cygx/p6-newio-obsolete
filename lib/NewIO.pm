@@ -141,6 +141,7 @@ my role IO::Stream {
 
 my role IO::Stream::Str does IO::Stream {
     method close { ... }
+    method reopen { ... }
     method get { ... }
     method getc { ... }
     method put(Str:D) { ... }
@@ -265,6 +266,7 @@ my role IO::Stream::Str does IO::Stream {
 
 my role IO::Stream::Uni does IO::Stream {
     method close { ... }
+    method reopen { ... }
     method uniread(Int:D) { ... }
     method uniwrite(Uni:D) { ... }
     method uniget { ... }
@@ -295,6 +297,7 @@ my role IO::Stream::Uni does IO::Stream {
 
 my role IO::Stream::Bin does IO::Stream {
     method close { ... }
+    method reopen { ... }
     method read(Int:D) { ... }
     method write(Blob:D) { ... }
     method getbyte { ... }
@@ -306,9 +309,15 @@ my role IO::Stream::Bin does IO::Stream {
         self.close if $close;
         $buf;
     }
+
+
 }
 
 my class IO::Stream::Closed does IO::Stream {}
+
+my class IO::FileStream::Str { ... }
+my class IO::FileStream::Uni { ... }
+my class IO::FileStream::Bin { ... }
 
 my role IO::FileStream {
     has $!raw;
@@ -324,6 +333,13 @@ my role IO::FileStream {
         self.bless(raw => nqp::open($path, $mode), :$chomp);
     }
 
+    method !REOPEN {}
+
+    proto method reopen { self!REOPEN; {*}.bless(:$!raw, |%_) }
+    multi method reopen(:$bin!) { IO::FileStream::Bin }
+    multi method reopen(:$uni!) { IO::FileStream::Uni }
+    multi method reopen(:$str?) { IO::FileStream::Str }
+
     method close(--> True) {
         CATCH { X::IO.new(os-error => .message).fail }
         nqp::closefh($!raw);
@@ -336,6 +352,10 @@ my class IO::FileStream::Str does IO::FileStream does IO::Stream::Str {
     submethod BUILD(Mu :$raw, :$chomp) {
         self!SET-RAW($raw);
         $!chomp = so $chomp if defined $chomp;
+    }
+
+    method !REOPEN {
+        note '=> flushing decode buffers';
     }
 
     method get {
@@ -438,7 +458,7 @@ my role IO::FileIO does IO {
     proto method open-stream { {*}.new(self.abspath, mode(|%_), |%_) }
     multi method open-stream(:$bin!) { IO::FileStream::Bin }
     multi method open-stream(:$uni!) { IO::FileStream::Uni }
-    multi method open-stream { IO::FileStream::Str }
+    multi method open-stream(:$str?) { IO::FileStream::Str }
 }
 
 my class IO::Path is Path does IO::FileIO {}
